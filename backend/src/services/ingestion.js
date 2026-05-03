@@ -21,9 +21,11 @@ export async function ingestDocument(filePath, originalName, docId) {
     }
 
     const rawDocs = await loader.load();
+
     if (!rawDocs || rawDocs.length === 0) {
-  throw new Error('No content extracted from document');
-}
+      throw new Error('No content extracted from document');
+    }
+
     console.log(`✅ Loaded ${rawDocs.length} pages`);
 
     console.log('✂️ Step 2: Splitting into chunks...');
@@ -31,15 +33,15 @@ export async function ingestDocument(filePath, originalName, docId) {
       chunkSize: 500,
       chunkOverlap: 50,
     });
+
     const rawChunks = await splitter.splitDocuments(rawDocs);
 
-    // Clean and filter empty chunks
     const chunks = rawChunks
-      .map((c) => {
-        c.pageContent = c.pageContent.replace(/\0/g, '').trim();
-        return c;
+      .map((chunk) => {
+        chunk.pageContent = chunk.pageContent.replace(/\0/g, '').trim();
+        return chunk;
       })
-      .filter((c) => c.pageContent.length > 10);
+      .filter((chunk) => chunk.pageContent.length > 10);
 
     if (chunks.length === 0) {
       throw new Error(
@@ -49,11 +51,10 @@ export async function ingestDocument(filePath, originalName, docId) {
 
     console.log(`✅ Created ${chunks.length} valid chunks`);
 
-    // Attach metadata and clean out unsupported nested objects (like 'pdf' buffers)
     chunks.forEach((chunk, i) => {
       chunk.metadata = {
         chunkIndex: i,
-        docId: docId,
+        docId,
         fileName: originalName,
         page: chunk.metadata?.page ?? Math.floor(i / 5) + 1,
       };
@@ -65,20 +66,19 @@ export async function ingestDocument(filePath, originalName, docId) {
       model: 'gemini-embedding-001',
     });
 
-    console.log(`🧪 Testing embedding generation for chunk 0...`);
+    console.log('🧪 Testing embedding generation for chunk 0...');
     const testVector = await embeddings.embedQuery(chunks[0].pageContent);
 
     if (!testVector || testVector.length === 0) {
       throw new Error('Test vector was empty.');
     }
-    console.log(
-      `✅ Gemini test successful! Vector dimension: ${testVector.length}`
-    );
+
+    console.log(`✅ Gemini test successful! Vector dimension: ${testVector.length}`);
 
     console.log('💾 Step 4: Storing in ChromaDB...');
     await Chroma.fromDocuments(chunks, embeddings, {
       collectionName: docId,
-      url: 'http://localhost:8000',
+      url: process.env.CHROMA_URL || 'http://127.0.0.1:8000',
     });
 
     console.log(`✅ Ingested ${chunks.length} chunks for docId: ${docId}`);
